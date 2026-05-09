@@ -10,10 +10,13 @@ target secret already exists, it does nothing. There are no finalizers — when 
 
 ## How it works
 
-1. The operator reads master Postgres credentials from a Secret named by the
-   `POSTGRES_MASTER_SECRET` env var. Required keys: `host`, `username`,
-   `password`. Optional: `port` (default `5432`), `database` (default
-   `postgres`), `sslmode` (default `prefer`).
+1. The operator reads the master Postgres `username`/`password` from a Secret
+   named by `POSTGRES_MASTER_SECRET` (in the operator's own namespace). Host
+   and connection options come from env vars: `POSTGRES_HOST` (required),
+   `POSTGRES_PORT` (default `5432`), `POSTGRES_DATABASE` (default `postgres`),
+   `POSTGRES_SSLMODE` (default `prefer`). At startup the operator runs a
+   `SELECT version()` against the master and logs the result; a failed check
+   is logged as a warning but does not crash the pod.
 2. For each `DatabaseInstance`:
    - If the target Secret exists → use its `username`/`password`.
    - Otherwise generate a 32-char random password.
@@ -47,22 +50,31 @@ spec:
 
 ## Install
 
+The chart renders a `SealedSecret` (bitnami-labs/sealed-secrets) holding the
+master `username`/`password`. Encrypt the values with `kubeseal` first:
+
 ```sh
+RELEASE_NS=postgres-operator
+SECRET_NAME=postgres-master
+
+ENC_USER=$(echo -n "postgres" | kubeseal --raw \
+  --namespace "$RELEASE_NS" --name "$SECRET_NAME")
+ENC_PASS=$(echo -n "<master-password>" | kubeseal --raw \
+  --namespace "$RELEASE_NS" --name "$SECRET_NAME")
+
 helm install postgres-operator oci://docker.io/alphaprosoft/postgres-operator-helm \
-  --namespace postgres-operator --create-namespace \
-  --set masterSecret.name=postgres-master
+  --namespace "$RELEASE_NS" --create-namespace \
+  --set masterSecret.host=postgres.example.svc \
+  --set masterSecret.port=5432 \
+  --set masterSecret.database=postgres \
+  --set masterSecret.encryptedUsername="$ENC_USER" \
+  --set masterSecret.encryptedPassword="$ENC_PASS"
 ```
 
-The master secret must exist before any `DatabaseInstance` is reconciled:
-
-```sh
-kubectl -n postgres-operator create secret generic postgres-master \
-  --from-literal=host=postgres.example.svc \
-  --from-literal=port=5432 \
-  --from-literal=username=postgres \
-  --from-literal=password=... \
-  --from-literal=database=postgres
-```
+If you provision the Secret out of band (e.g. external-secrets, manual
+kubectl), set `masterSecret.create=false` and ensure a Secret named
+`masterSecret.name` with keys `username`/`password` exists in the release
+namespace before the operator pod starts.
 
 ## Layout
 

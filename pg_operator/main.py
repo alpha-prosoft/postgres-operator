@@ -52,22 +52,25 @@ def _load_master_credentials() -> dict:
     secret_name = os.environ.get(MASTER_SECRET_ENV)
     if not secret_name:
         raise RuntimeError(f"{MASTER_SECRET_ENV} env var not set")
+    host = os.environ.get("POSTGRES_HOST")
+    if not host:
+        raise RuntimeError("POSTGRES_HOST env var not set")
     namespace = _operator_namespace()
     v1 = client.CoreV1Api()
     secret = v1.read_namespaced_secret(secret_name, namespace)
     data = _decode_secret(secret)
-    missing = [k for k in ("username", "password", "host") if k not in data]
+    missing = [k for k in ("username", "password") if k not in data]
     if missing:
         raise RuntimeError(
             f"Master secret {namespace}/{secret_name} missing keys: {missing}"
         )
     return {
-        "host": data["host"],
-        "port": int(data.get("port", "5432")),
+        "host": host,
+        "port": int(os.environ.get("POSTGRES_PORT", "5432")),
         "user": data["username"],
         "password": data["password"],
-        "database": data.get("database", "postgres"),
-        "sslmode": data.get("sslmode", "prefer"),
+        "database": os.environ.get("POSTGRES_DATABASE", "postgres"),
+        "sslmode": os.environ.get("POSTGRES_SSLMODE", "prefer"),
     }
 
 
@@ -159,13 +162,31 @@ def _degraded(patch, logger, prev_phase: Optional[str], message: str) -> None:
 
 
 @kopf.on.startup()
-def configure(settings: kopf.OperatorSettings, **_):
+def configure(settings: kopf.OperatorSettings, logger, **_):
     settings.persistence.finalizer = None
     settings.posting.level = logging.WARNING
     try:
         config.load_incluster_config()
     except config.ConfigException:
         config.load_kube_config()
+
+    try:
+        conn, creds = _connect_master()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT version()")
+                version = cur.fetchone()[0]
+        finally:
+            conn.close()
+        logger.info(
+            f"Master Postgres reachable at {creds['host']}:{creds['port']} "
+            f"as '{creds['user']}' ({version.split(' on ')[0]})"
+        )
+    except Exception as e:
+        logger.warning(
+            f"Master Postgres connection check failed: {e}. "
+            "Operator will keep running; reconciliations will retry."
+        )
 
 
 @kopf.on.create(GROUP, VERSION, PLURAL)

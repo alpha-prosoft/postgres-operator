@@ -5,12 +5,26 @@ image:
 
 imagePullSecrets: []
 
-# Name of the Secret holding master Postgres credentials.
-# Must contain keys: host, username, password (optional: port, database, sslmode).
+# Master Postgres connection. Only username/password are kept secret (and
+# rendered into a SealedSecret); host/port/database/sslmode are plain config.
 masterSecret:
+  # Name of the SealedSecret/Secret the operator reads (created in the release
+  # namespace).
   name: postgres-master
-  # If empty, defaults to the operator's own namespace at runtime.
-  namespace: ""
+  # Render the SealedSecret CR. Disable if the Secret is provisioned out of band.
+  create: true
+  # Plain connection parameters — passed to the operator as env vars.
+  host: ""
+  port: 5432
+  database: postgres
+  sslmode: prefer
+  # kubeseal-encrypted ciphertexts. Required when create=true.
+  # Generate with:
+  #   echo -n "$USER" | kubeseal --raw --namespace <release-ns> --name <masterSecret.name>
+  encryptedUsername: ""
+  encryptedPassword: ""
+  # Override only if your sealed-secrets controller exposes a non-default group.
+  sealedApiVersion: bitnami.com/v1alpha1
 
 installCRD: true
 

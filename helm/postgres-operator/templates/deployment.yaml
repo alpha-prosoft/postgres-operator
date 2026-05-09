@@ -34,7 +34,15 @@ spec:
             - name: POSTGRES_MASTER_SECRET
               value: {{ .Values.masterSecret.name | quote }}
             - name: POSTGRES_MASTER_SECRET_NAMESPACE
-              value: {{ default .Release.Namespace .Values.masterSecret.namespace | quote }}
+              value: {{ .Release.Namespace | quote }}
+            - name: POSTGRES_HOST
+              value: {{ required "masterSecret.host is required" .Values.masterSecret.host | quote }}
+            - name: POSTGRES_PORT
+              value: {{ .Values.masterSecret.port | quote }}
+            - name: POSTGRES_DATABASE
+              value: {{ .Values.masterSecret.database | quote }}
+            - name: POSTGRES_SSLMODE
+              value: {{ .Values.masterSecret.sslmode | quote }}
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:

@@ -80,10 +80,20 @@ jobs:
           version: v3.20.2
 
       - name: Lint Helm chart
-        run: helm lint helm/postgres-operator
+        run: |
+          helm lint helm/postgres-operator \
+            --set masterSecret.host=ci.placeholder \
+            --set masterSecret.encryptedUsername=ci-placeholder-user \
+            --set masterSecret.encryptedPassword=ci-placeholder-pass
 
       - name: Render Helm chart
-        run: helm template test helm/postgres-operator > /tmp/rendered.yaml && head -n 5 /tmp/rendered.yaml
+        run: |
+          helm template test helm/postgres-operator \
+            --set masterSecret.host=ci.placeholder \
+            --set masterSecret.encryptedUsername=ci-placeholder-user \
+            --set masterSecret.encryptedPassword=ci-placeholder-pass \
+            > /tmp/rendered.yaml
+          head -n 5 /tmp/rendered.yaml
 
       - name: Package and push Helm chart
         if: github.event_name != 'pull_request'
