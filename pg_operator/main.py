@@ -272,6 +272,12 @@ def reconcile(spec, status, name, namespace, patch, logger, **_):
         if not db_exists:
             with conn.cursor() as cur:
                 cur.execute(
+                    sql.SQL("GRANT {} TO {}").format(
+                        sql.Identifier(username),
+                        sql.Identifier(master["user"]),
+                    )
+                )
+                cur.execute(
                     sql.SQL("CREATE DATABASE {} OWNER {}").format(
                         sql.Identifier(db_name),
                         sql.Identifier(username),

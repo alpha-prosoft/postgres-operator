@@ -1,38 +1,6 @@
 # postgres-operator
 
-Lightweight Kubernetes operator (kopf) that creates Postgres databases and
-credential Secrets from a `DatabaseInstance` custom resource.
-
-The operator **never deletes and never overrides**: every action is a guarded
-"create-if-missing". If the database already exists, it does nothing. If the
-target secret already exists, it does nothing. There are no finalizers — when a
-`DatabaseInstance` is deleted, nothing is dropped from Postgres.
-
-## How it works
-
-1. The operator reads the master Postgres `username`/`password` from a Secret
-   named by `POSTGRES_MASTER_SECRET` (in the operator's own namespace). Host
-   and connection options come from env vars: `POSTGRES_HOST` (required),
-   `POSTGRES_PORT` (default `5432`), `POSTGRES_DATABASE` (default `postgres`),
-   `POSTGRES_SSLMODE` (default `prefer`). At startup the operator runs a
-   `SELECT version()` against the master and logs the result; a failed check
-   is logged as a warning but does not crash the pod.
-2. For each `DatabaseInstance`:
-   - If the target Secret exists → use its `username`/`password`.
-   - Otherwise generate a 32-char random password.
-   - If the role doesn't exist → `CREATE ROLE … LOGIN PASSWORD …`.
-   - If the database doesn't exist → `CREATE DATABASE … OWNER …`.
-   - If the target Secret doesn't exist → create it with `host`, `port`,
-     `database`, `username`, `password`, `url`.
-3. Status is written to `.status.phase` (`Ready` / `Degraded`),
-   `.status.message`, `.status.health`, and `.status.conditions[Ready]` so
-   ArgoCD shows the resource health correctly.
-
-If a role already exists but the target secret is missing, the operator marks
-the instance `Degraded` (it cannot reconstruct the password and refuses to
-override).
-
-## Example
+A tiny Kubernetes operator (kopf, ~250 LoC) that turns this:
 
 ```yaml
 apiVersion: postgres.alpha-prosoft.com/v1
@@ -43,56 +11,129 @@ metadata:
 spec:
   databaseName: my_app
   targetSecretName: my-app-db-credentials
-  # Optional:
-  # username: my_app_user
-  # targetSecretNamespace: my-app
 ```
+
+…into a Postgres database, a role, and a Kubernetes Secret with connection
+credentials.
+
+**Create-only.** The operator never drops databases, never deletes Secrets,
+never rotates passwords. Every action is guarded by an existence check —
+re-running is always a no-op once the desired state is reached.
+
+## Flow
+
+```mermaid
+flowchart LR
+    User[User] -- kubectl apply --> CR[DatabaseInstance CR]
+    CR -- watched --> Op[postgres-operator]
+    Op -- read username/password --> M[(SealedSecret<br/>postgres-master)]
+    Op -- CREATE ROLE / DB --> PG[(Postgres)]
+    Op -- create if missing --> S[Target Secret<br/>host port user pass url]
+    App[Your app] -- mounts --> S
+    App -- connects --> PG
+```
+
+Reconcile decision per CR:
+
+| Target Secret | Role | Database | Action |
+|---|---|---|---|
+| missing | missing | missing | generate password → create role + DB + Secret |
+| missing | missing | exists | create role + Secret (DB left alone) |
+| missing | **exists** | any | **Degraded** — can't recover password, refuse to override |
+| exists | missing | any | reuse password from Secret → create role (+ DB if missing) |
+| exists | exists | exists | no-op |
+
+## Status
+
+Status is written for ArgoCD-style health probes:
+
+```yaml
+status:
+  phase: Ready                # Ready | Degraded
+  message: "database='my_app' user='my_app' secret='my-app/my-app-db-credentials'"
+  health:
+    status: Healthy           # Healthy | Degraded
+    message: ...
+  conditions:
+    - type: Ready
+      status: "True"
+      reason: Ready
+      message: ...
+```
+
+A Lua health hook for ArgoCD (`resource.customizations.health.postgres.alpha-prosoft.com_DatabaseInstance`) is included with the chart so Argo shows the right colour in the UI.
 
 ## Install
 
-The chart renders a `SealedSecret` (bitnami-labs/sealed-secrets) holding the
-master `username`/`password`. Encrypt the values with `kubeseal` first:
+The chart renders a `SealedSecret` for the master Postgres user. Pre-seal the
+values with `kubeseal`:
 
 ```sh
 RELEASE_NS=postgres-operator
-SECRET_NAME=postgres-master
+SECRET=postgres-master
 
-ENC_USER=$(echo -n "postgres" | kubeseal --raw \
-  --namespace "$RELEASE_NS" --name "$SECRET_NAME")
-ENC_PASS=$(echo -n "<master-password>" | kubeseal --raw \
-  --namespace "$RELEASE_NS" --name "$SECRET_NAME")
+ENC_USER=$(echo -n "postgres" | kubeseal --raw -n "$RELEASE_NS" --name "$SECRET")
+ENC_PASS=$(echo -n "<password>" | kubeseal --raw -n "$RELEASE_NS" --name "$SECRET")
 
 helm install postgres-operator oci://docker.io/alphaprosoft/postgres-operator-helm \
   --namespace "$RELEASE_NS" --create-namespace \
   --set masterSecret.host=postgres.example.svc \
-  --set masterSecret.port=5432 \
-  --set masterSecret.database=postgres \
   --set masterSecret.encryptedUsername="$ENC_USER" \
   --set masterSecret.encryptedPassword="$ENC_PASS"
 ```
 
-If you provision the Secret out of band (e.g. external-secrets, manual
-kubectl), set `masterSecret.create=false` and ensure a Secret named
-`masterSecret.name` with keys `username`/`password` exists in the release
-namespace before the operator pod starts.
+To bring your own Secret instead, set `masterSecret.create=false` and ensure a
+Secret named `masterSecret.name` with keys `username`/`password` exists in the
+release namespace before the operator starts.
+
+### Configuration
+
+| Helm value | Default | Notes |
+|---|---|---|
+| `masterSecret.host` | _required_ | FQDN of the master Postgres |
+| `masterSecret.port` | `5432` | |
+| `masterSecret.database` | `postgres` | DB to use for the admin connection |
+| `masterSecret.sslmode` | `prefer` | psycopg sslmode |
+| `masterSecret.create` | `true` | Render the SealedSecret |
+| `masterSecret.encryptedUsername` | _required if `create`_ | kubeseal --raw output |
+| `masterSecret.encryptedPassword` | _required if `create`_ | kubeseal --raw output |
+| `image.repository` | `alphaprosoft/postgres-operator` | |
+| `replicaCount` | `1` | |
+| `resources` | small defaults | |
+
+## Generated Secret
+
+```
+host       postgres.example.svc
+port       5432
+database   my_app
+username   my_app
+password   <32-char random>
+url        postgresql://my_app:...@postgres.example.svc:5432/my_app
+```
+
+The Secret is **not** linked to the `DatabaseInstance` via `ownerReferences` —
+that would cascade-delete it when the CR is removed, which we explicitly don't
+want. The Secret stays put even if the CR is gone. Find it via
+`app.kubernetes.io/managed-by=postgres-operator`.
 
 ## Layout
 
-- `pg_operator/` — operator source (kopf handlers).
-- `helm/postgres-operator/` — Helm chart (CRD, RBAC, Deployment, SA).
-  Run `helm template helm/postgres-operator` to render the raw manifests if you need the CRD outside Helm.
-- `Dockerfile` — runtime image (`python:3.12-slim` + kopf).
-- `.github/workflows/build.yml` — image + chart push to DockerHub OCI.
+```
+pg_operator/                     operator source (kopf handlers)
+helm/postgres-operator/          Helm chart: CRD, RBAC, Deployment, SealedSecret
+Dockerfile                       python:3.12-slim runtime
+.github/workflows/build.yml      image + chart push (DockerHub OCI)
+```
 
-## CI secrets / variables
+## CI
 
-- `secrets.DOCKER_PUSH_USERNAME` — DockerHub username; doubles as the
-  namespace when `DOCKER_PUSH_URL` is host-only.
-- `secrets.DOCKER_PUSH_PASSWORD` — DockerHub access token.
-- `vars.DOCKER_PUSH_URL` — registry. Either host-only (`docker.io`) or
-  host+namespace (`docker.io/myorg`). Host-only means images push to
-  `docker.io/{username}/postgres-operator`.
+Repo (or org) needs:
 
-These can live at organization level — GitHub Actions resolves org-level
-`secrets`/`vars` automatically as long as the repo is granted access in
-**Org → Settings → Secrets and variables → Actions → Repository access**.
+- `secrets.DOCKER_PUSH_USERNAME` — also used as the namespace when
+  `DOCKER_PUSH_URL` is host-only.
+- `secrets.DOCKER_PUSH_PASSWORD`
+- `vars.DOCKER_PUSH_URL` — `docker.io` or `docker.io/<org>`.
+
+Image: `docker.io/{namespace}/postgres-operator:1.{count}-{branch}`
+Chart: `oci://docker.io/{namespace}/postgres-operator-helm:1.{count}-{branch}`
