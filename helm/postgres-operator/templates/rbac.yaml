@@ -1,0 +1,45 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "postgres-operator.fullname" . }}
+  labels:
+    {{- include "postgres-operator.labels" . | nindent 4 }}
+rules:
+  # CR access
+  - apiGroups: ["postgres.alpha-prosoft.com"]
+    resources: ["databaseinstances", "databaseinstances/status"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+  # Secrets — get + create only (never delete or update existing secrets)
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create"]
+  # Events for status reporting (kopf posts events for warnings/errors)
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  # CRD discovery
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+  # Namespaces — kopf list at startup
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "postgres-operator.fullname" . }}
+  labels:
+    {{- include "postgres-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "postgres-operator.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "postgres-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}

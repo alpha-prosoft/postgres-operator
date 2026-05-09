@@ -1,0 +1,21 @@
+postgres-operator {{ .Chart.AppVersion }} installed in namespace {{ .Release.Namespace }}.
+
+Make sure the master Postgres credentials Secret exists:
+
+  kubectl -n {{ default .Release.Namespace .Values.masterSecret.namespace }} create secret generic {{ .Values.masterSecret.name }} \
+    --from-literal=host=<host> \
+    --from-literal=port=5432 \
+    --from-literal=username=<master-user> \
+    --from-literal=password=<master-password> \
+    --from-literal=database=postgres
+
+Create a database with:
+
+  apiVersion: postgres.alpha-prosoft.com/v1
+  kind: DatabaseInstance
+  metadata:
+    name: my-app-db
+    namespace: my-app
+  spec:
+    databaseName: my_app
+    targetSecretName: my-app-db-credentials

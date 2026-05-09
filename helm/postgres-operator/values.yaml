@@ -1,0 +1,47 @@
+image:
+  repository: alphaprosoft/postgres-operator
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Name of the Secret holding master Postgres credentials.
+# Must contain keys: host, username, password (optional: port, database, sslmode).
+masterSecret:
+  name: postgres-master
+  # If empty, defaults to the operator's own namespace at runtime.
+  namespace: ""
+
+installCRD: true
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 96Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+serviceAccount:
+  create: true
+  name: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+extraEnv: []

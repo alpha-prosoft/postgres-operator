@@ -1,0 +1,97 @@
+{{- if .Values.installCRD }}
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: databaseinstances.postgres.alpha-prosoft.com
+  annotations:
+    helm.sh/resource-policy: keep
+  labels:
+    {{- include "postgres-operator.labels" . | nindent 4 }}
+spec:
+  group: postgres.alpha-prosoft.com
+  scope: Namespaced
+  names:
+    kind: DatabaseInstance
+    plural: databaseinstances
+    singular: databaseinstance
+    shortNames:
+      - dbi
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Database
+          type: string
+          jsonPath: .spec.databaseName
+        - name: Secret
+          type: string
+          jsonPath: .spec.targetSecretName
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Message
+          type: string
+          jsonPath: .status.message
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - databaseName
+                - targetSecretName
+              properties:
+                databaseName:
+                  type: string
+                  pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+                  maxLength: 63
+                username:
+                  type: string
+                  pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+                  maxLength: 63
+                targetSecretName:
+                  type: string
+                targetSecretNamespace:
+                  type: string
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                message:
+                  type: string
+                observedAt:
+                  type: string
+                health:
+                  type: object
+                  properties:
+                    status:
+                      type: string
+                    message:
+                      type: string
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, status]
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+{{- end }}

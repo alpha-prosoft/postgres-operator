@@ -1,0 +1,7 @@
+apiVersion: v2
+name: postgres-operator
+description: Lightweight Kubernetes operator that creates Postgres databases and credentials Secrets from a DatabaseInstance CR.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.22.0-0"
