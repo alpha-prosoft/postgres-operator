@@ -178,15 +178,13 @@ def configure(settings: kopf.OperatorSettings, logger, **_):
                 version = cur.fetchone()[0]
         finally:
             conn.close()
-        logger.info(
-            f"Master Postgres reachable at {creds['host']}:{creds['port']} "
-            f"as '{creds['user']}' ({version.split(' on ')[0]})"
-        )
     except Exception as e:
-        logger.warning(
-            f"Master Postgres connection check failed: {e}. "
-            "Operator will keep running; reconciliations will retry."
-        )
+        logger.error(f"Master Postgres connection check failed: {e}")
+        raise kopf.PermanentError(f"Cannot reach master Postgres: {e}") from e
+    logger.info(
+        f"Master Postgres reachable at {creds['host']}:{creds['port']} "
+        f"as '{creds['user']}' ({version.split(' on ')[0]})"
+    )
 
 
 @kopf.on.create(GROUP, VERSION, PLURAL)
