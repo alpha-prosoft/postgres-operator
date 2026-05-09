@@ -17,6 +17,7 @@ from typing import Optional
 
 import kopf
 import psycopg
+from psycopg import sql
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 
@@ -130,10 +131,9 @@ def _create_secret(namespace: str, name: str, data: dict) -> None:
     v1.create_namespaced_secret(namespace, body)
 
 
-def _quote_ident(name: str) -> str:
-    if not all(c.isalnum() or c == "_" for c in name):
+def _validate_ident(name: str) -> None:
+    if not name or not all(c.isalnum() or c == "_" for c in name):
         raise ValueError(f"invalid identifier: {name!r}")
-    return '"' + name + '"'
 
 
 def _set_status(patch, phase: str, message: str, ready: bool) -> None:
@@ -206,8 +206,8 @@ def reconcile(spec, status, name, namespace, patch, logger, **_):
     username = spec.get("username") or db_name
 
     try:
-        _quote_ident(db_name)
-        _quote_ident(username)
+        _validate_ident(db_name)
+        _validate_ident(username)
     except ValueError as e:
         _degraded(patch, logger, prev_phase, str(e))
         return
@@ -235,7 +235,7 @@ def reconcile(spec, status, name, namespace, patch, logger, **_):
             if secret_username:
                 username = secret_username
                 try:
-                    _quote_ident(username)
+                    _validate_ident(username)
                 except ValueError as e:
                     _degraded(patch, logger, prev_phase, str(e))
                     return
@@ -262,15 +262,20 @@ def reconcile(spec, status, name, namespace, patch, logger, **_):
         if not user_exists:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"CREATE ROLE {_quote_ident(username)} WITH LOGIN PASSWORD %s",
-                    (password,),
+                    sql.SQL("CREATE ROLE {} WITH LOGIN PASSWORD {}").format(
+                        sql.Identifier(username),
+                        sql.Literal(password),
+                    )
                 )
             actions.append(f"role '{username}'")
 
         if not db_exists:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"CREATE DATABASE {_quote_ident(db_name)} OWNER {_quote_ident(username)}"
+                    sql.SQL("CREATE DATABASE {} OWNER {}").format(
+                        sql.Identifier(db_name),
+                        sql.Identifier(username),
+                    )
                 )
             actions.append(f"database '{db_name}'")
 
